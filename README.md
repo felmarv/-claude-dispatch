@@ -1,70 +1,150 @@
-# /dispatch — Sistema de Despacho Automático de Tareas entre Sesiones Claude
+# /dispatch — Parallel Task Dispatcher for Claude Code
 
-## Qué es
+Plugin for Claude Code that dispatches tasks in parallel across multiple Claude sessions running in tmux. A coordinator distributes work, monitors completion via file existence checks, detects stuck workers with a watchdog, and auto-reassigns. Turns 13 hours of sequential work into 3 hours with 4 workers.
 
-Sistema que permite a una sesión coordinadora de Claude Code despachar tareas a múltiples sesiones worker corriendo en tmux. Cada worker ejecuta una tarea independiente (investigación + generación de documento) mientras el dispatcher monitorea y asigna la siguiente tarea cuando un worker se libera.
+## What it does
 
-## Para qué sirve
+- Distributes tasks across multiple Claude Code sessions in tmux windows
+- Monitors completion by checking if expected output files exist (more reliable than screen scraping)
+- Detects stuck workers with a watchdog (compares screen captures every cycle)
+- Auto-injects "no subagents for web search" restriction (subagents don't inherit bypass permissions)
+- Sends automatic Enter after paste to resolve the "Pasted text" buffer issue
+- Supports task dependencies (DAG) — e.g., task 13 waits for tasks 1-6
+- Persists state across restarts — never loses progress
 
-- Investigaciones masivas en paralelo (ej: análisis de viabilidad de 6 estados + 6 países)
-- Generación de documentos en batch (cada worker produce un .docx)
-- Cualquier workload de Claude Code que sea paralelizable y tenga output verificable
+## Real-world usage
 
-## Caso de uso real
+**13 research tasks dispatched in parallel:**
+- 6 market viability analyses by Mexican state
+- 6 country expansion analyses (Peru, Ecuador, Argentina, Spain, Brazil, Dominican Republic)
+- 1 consolidated report (depended on the 6 state analyses)
+- 4 simultaneous workers in tmux
+- Result: 13 professional .docx documents generated in ~3 hours
 
-**DOMINEUM — 13 tareas despachadas en paralelo:**
-- 6 análisis de viabilidad por estado mexicano (Jalisco, NL, Querétaro, EdoMex, Puebla, Guanajuato)
-- 6 análisis de viabilidad por país (Perú, RD, Ecuador, Argentina, España, Brasil)
-- 1 documento consolidado (dependía de los 6 estados)
-- 4 workers simultáneos en tmux
-- Resultado: 13 documentos .docx generados en ~3 horas (vs ~13 horas secuencialmente)
+## Installation
 
-## Componentes
-
-| Componente | Archivo | Función |
-|------------|---------|---------|
-| Cola de tareas | `tasks.txt` | Lista de tareas con formato `ID\|TIPO\|NOMBRE\|RUTA_DOCX\|INSTRUCCION` |
-| Script dispatcher | `dispatcher_v2.sh` | Loop principal: monitorea, detecta completación, asigna tareas |
-| Estado persistente | `state_v2.txt` | Trackea progreso: próxima tarea, completadas, asignación por ventana |
-| Bitácora | `dispatcher_v2.log` | Log timestamped de todo: envíos, completaciones, status |
-
-## Cómo funciona
-
-```
-1. El dispatcher lee tasks.txt
-2. Identifica ventanas tmux con Claude corriendo (workers)
-3. Envía la primera tarea disponible a cada worker vía tmux send-keys
-4. Cada 60 segundos:
-   a. Verifica si algún worker completó su tarea (¿existe el .docx?)
-   b. Si completó → marca como libre → asigna siguiente tarea
-   c. Si está idle sin .docx después de 5 min → marca como fallo
-   d. Logea status
-5. Repite hasta que todas las tareas se completen
+1. Clone this repo into your plugins directory:
+```bash
+git clone https://github.com/felmarv/-claude-dispatch.git ~/plugins/dispatch
 ```
 
-## Uso
+2. Copy the slash command to your Claude Code commands:
+```bash
+cp ~/plugins/dispatch/commands/dispatch.md ~/.claude/commands/dispatch.md
+```
+
+3. `/dispatch` is now available in Claude Code — no restart needed.
+
+## Usage
 
 ```bash
-# Ejecutar con defaults (60s intervalo, 4 workers)
-./dispatcher_v2.sh
+# Dispatch tasks from a file
+/dispatch run tasks.txt
 
-# Personalizar
-./dispatcher_v2.sh 30 6  # 30s intervalo, 6 workers
+# Dispatch with options
+/dispatch run tasks.txt --workers 6 --interval 30
 
-# Ver progreso en tiempo real
-tail -f dispatcher_v2.log
+# Check progress
+/dispatch status
+
+# Stop the dispatcher (workers finish current task)
+/dispatch stop
+
+# Retry a failed task
+/dispatch retry 5
+
+# Retry all failed tasks
+/dispatch retry --failed
 ```
 
-## Estado actual
+## Task file format
 
-- **V2** — funcional con 11 bugs documentados y resueltos/mitigados
-- **No es skill todavía** — es un script bash que se ejecuta manualmente
-- **Próximo paso** — convertir en skill `/dispatch` de Claude Code
+```
+# Lines starting with # are comments
+# Format: ID|TYPE|NAME|OUTPUT_PATH|INSTRUCTION
 
-## Archivos de referencia
+1|research|California|/path/to/output.docx|Research California as a market...
+2|research|Texas|/path/to/output.docx|Research Texas as a market...
+3|consolidated|Summary|/path/to/summary.docx|Read documents 1-2 and consolidate... depends_on:1,2
+```
 
-- `knowledge/` — documentación técnica de cada componente
-- `session-log/` — timeline de la sesión donde se construyó y probó
-- `future/` — diseño propuesto para el skill `/dispatch`
-- `BUGS.md` — los 11 bugs encontrados con causas raíz y soluciones
-- `ARCHITECTURE.md` — diagrama y flujo completo del sistema
+| Field | Description |
+|-------|-------------|
+| ID | Sequential integer, unique |
+| TYPE | Category for grouping (your choice) |
+| NAME | Short name for logs |
+| OUTPUT_PATH | Full path to expected output file — used for completion detection |
+| INSTRUCTION | Complete prompt for Claude. Must be self-contained. |
+
+## Architecture
+
+```
+┌──────────────┐     ┌──────────────┐     ┌─────────────────────┐
+│ Task file    │────▶│  Dispatcher   │────▶│   tmux workers      │
+│ (tasks.txt)  │     │  (v3, bash)   │     │   (Claude sessions) │
+└──────────────┘     └──────┬───────┘     └─────────┬───────────┘
+                            │                        │
+                    ┌───────▼───────┐        ┌───────▼───────┐
+                    │  state.txt    │        │  output files │
+                    │  dispatch.log │        │  (.docx, etc) │
+                    └───────────────┘        └───────────────┘
+```
+
+**Hybrid approach:** Claude parses tasks and launches the bash dispatcher in the background. The bash script handles the monitoring loop (every 60s). Claude remains available for `/dispatch status` and `/dispatch retry`.
+
+## Known bugs (11 documented)
+
+All discovered during real-world usage. See [BUGS.md](BUGS.md) for full details with root causes and solutions.
+
+| # | Bug | Severity | Status |
+|---|-----|----------|--------|
+| 1 | Premature idle detection | High | Fixed (cooldown) |
+| 2 | /clear + instruction as separate steps | Medium | Fixed (no /clear) |
+| 3 | init_state overwrites progress | High | Fixed (check exists) |
+| 4 | Pasted text not executed | High | Fixed (extra Enter) |
+| 5 | Subagents don't inherit web search permissions | Medium | Fixed (inject restriction) |
+| 6 | Residual text from dead session | Low | Manual (recreate window) |
+| 7 | "Pasted text" needs extra Enter | High | Fixed (sleep 3 + Enter) |
+| 8 | Doesn't track externally assigned tasks | Medium | Fixed (independent idle check) |
+| 9 | Idle detection fails with long output | High | Fixed (last line only) |
+| 10 | **Doesn't detect stuck workers** | **Critical** | **Fixed in V3 (watchdog)** |
+| 11 | Task sent to window with existing conversation | Low | Accepted trade-off |
+
+## Project structure
+
+```
+plugins/dispatch/
+├── README.md                              # This file
+├── BUGS.md                                # 11 bugs with root causes and fixes
+├── ARCHITECTURE.md                        # System diagrams and flow
+├── dispatcher_v3.sh                       # Bash dispatcher with watchdog
+├── commands/
+│   └── dispatch.md                        # Slash command for Claude Code
+├── skills/dispatch/
+│   ├── SKILL.md                           # Full skill prompt (the brain)
+│   └── references/
+│       ├── detection-rules.md             # Idle/done/stuck detection rules
+│       └── tmux-patterns.md               # tmux command reference
+├── knowledge/
+│   ├── dispatcher_v2.sh                   # Original script (reference)
+│   ├── tasks-example.txt                  # Real task file (13 tasks)
+│   ├── task-format.md                     # Task format documentation
+│   ├── idle-detection.md                  # How idle detection works
+│   ├── tmux-integration.md                # tmux send-keys patterns
+│   └── watchdog-design.md                 # Watchdog design document
+├── session-log/
+│   └── timeline.md                        # Build session timeline
+└── future/
+    └── skill-design.md                    # Future improvements roadmap
+```
+
+## Requirements
+
+- macOS with tmux installed
+- Claude Code CLI
+- Multiple Claude Code sessions (each uses ~200-300 MB RAM)
+- Practical limit: ~4-5 workers on 8 GB RAM
+
+## License
+
+MIT
