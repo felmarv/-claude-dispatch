@@ -1,0 +1,13 @@
+# State and runtime files
+state.txt
+dispatch.log
+dispatcher.pid
+
+# Session logs with real data
+session-log/dispatcher_v2.log
+
+# Temp files
+/tmp/
+
+# macOS
+.DS_Store
