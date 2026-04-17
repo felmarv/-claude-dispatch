@@ -130,20 +130,39 @@ are_dependencies_met() {
 
 is_session_idle() {
     local window=$1
-    local last_line
-    last_line=$(tmux capture-pane -t "0:${window}" -p -S -1 2>/dev/null | grep -v '^$' | tail -1)
+    local captured
+    # Capturar scrollback completo — el prompt ❯ puede estar profundo porque
+    # Claude Code dibuja el pane entero con muchas líneas vacías después
+    captured=$(tmux capture-pane -t "0:${window}" -p -S - 2>/dev/null)
 
-    if [ -z "$last_line" ]; then
+    if [ -z "$captured" ]; then
         return 1
     fi
 
-    # Solo revisar la ÚLTIMA línea: ¿es un prompt ❯ vacío?
-    if echo "$last_line" | grep -qE "❯\s*$" && \
-       ! echo "$last_line" | grep -qE "\[Pasted"; then
-        return 0  # Idle
+    # Si hay "[Pasted" o "esc to interrupt" recientemente, está procesando
+    # Solo chequear últimas 50 líneas para "esc to interrupt"
+    if echo "$captured" | tail -50 | grep -qE "\[Pasted|esc to interrupt"; then
+        return 1
     fi
 
-    return 1
+    # Buscar el ÚLTIMO prompt ❯ vacío en TODO el buffer
+    # Si existe y no hay "esc to interrupt" después, está idle
+    local last_prompt_line
+    last_prompt_line=$(echo "$captured" | grep -n "^❯[[:space:]]*$" | tail -1 | cut -d: -f1)
+
+    if [ -z "$last_prompt_line" ]; then
+        return 1
+    fi
+
+    # Verificar que después del último prompt no hay indicadores de actividad
+    local after_prompt
+    after_prompt=$(echo "$captured" | sed -n "$((last_prompt_line + 1)),\$p")
+
+    if echo "$after_prompt" | grep -qE "Schlepping|Crunching|Thinking|esc to interrupt|\[Pasted"; then
+        return 1
+    fi
+
+    return 0  # Idle
 }
 
 is_task_done() {
