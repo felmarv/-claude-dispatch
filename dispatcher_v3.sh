@@ -3,6 +3,23 @@
 # Dispatcher V3 — Despacho Automático de Tareas entre Sesiones Claude
 # Márquez & Asociados — Mac Mini Server
 #
+# Rol dentro de SIMBIOSIS:
+#   ⚠️  TOOL ONE-SHOT — NO es el pipeline continuo.
+#   Se usó UNA sola vez (2026-04-17) para el backfill histórico masivo
+#   del export Claude.ai Chat (403 tareas iniciales). Ese backfill ya
+#   terminó: 220 procesadas, 183 failed pendientes.
+#
+#   El pipeline continuo de ingesta Chat vive en el Orquestador
+#   (CRECIMIENTO/5. SIMBIOSIS/_orquestador.sh, modo `backfill_chat`)
+#   y usa UN SOLO agente secuencial — nada de workers paralelos en
+#   operación normal. Ya se hizo lo pesado.
+#
+#   Este script queda disponible como herramienta de emergencia si
+#   algún día hay un backlog masivo que justifique multi-worker, pero
+#   NO corre en cron y NO es ingestor permanente de SIMBIOSIS.
+#
+#   Panorama completo: CRECIMIENTO/5. SIMBIOSIS/ARQUITECTURA.md
+#
 # Mejoras sobre V2:
 #   - Watchdog: detecta workers atorados (>15 min sin cambio)
 #   - Enter automático post-paste (Bug 7 fix)
@@ -168,7 +185,13 @@ is_session_idle() {
 is_task_done() {
     local docx_path
     docx_path=$(get_task_docx "$1")
-    [ -f "$docx_path" ] && [ -s "$docx_path" ]  # Existe Y no está vacío
+    # Si la ruta es un marker .done → solo checar existencia
+    # Si es un documento real (docx, md) → checar existencia Y no vacío
+    if [[ "$docx_path" == *.done ]]; then
+        [ -f "$docx_path" ]
+    else
+        [ -f "$docx_path" ] && [ -s "$docx_path" ]
+    fi
 }
 
 # --- WATCHDOG ---
@@ -322,7 +345,7 @@ setup_workers() {
     local coord_window
     coord_window=$(tmux display-message -p '#{window_index}' 2>/dev/null || echo "3")
 
-    local available_windows=(1 2 4 5 6 7 8 9)
+    local available_windows=(1 2 4 6 7 8 9)
     local count=0
 
     for win in "${available_windows[@]}"; do

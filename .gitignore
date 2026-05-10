@@ -11,3 +11,7 @@ session-log/dispatcher_v2.log
 
 # macOS
 .DS_Store
+
+# Backups con timestamp
+*.bak
+*.bak.*
