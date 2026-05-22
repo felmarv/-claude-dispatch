@@ -1,0 +1,86 @@
+# Gitleaks config para el ecosistema Felipe Márquez
+# Doctrina: detectar secrets + PII jurídica mexicana (LFPDPPP)
+# Caso semilla: incidente b865668 (2026-05-21) — PII hardcoded en script
+
+title = "boletin-yucatan-mcp - Felipe Márquez ecosystem"
+
+[extend]
+useDefault = true
+
+# ─── Reglas custom: PII jurídica mexicana ──────────────────────────────────
+
+[[rules]]
+id = "mx-curp"
+description = "CURP mexicano (Clave Única de Registro de Población)"
+regex = '''\b[A-Z][AEIOUX][A-Z]{2}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b'''
+tags = ["pii", "mexico"]
+
+[[rules]]
+id = "mx-expediente-judicial"
+description = "Expediente judicial NNNNN/AAAA en literal de dato"
+regex = '''"expediente":\s*"\d{3,5}/20\d{2}"'''
+tags = ["pii", "mexico", "judicial"]
+
+[[rules]]
+id = "mx-folio-rpp-yucatan"
+description = "Folio INSEJUPY (Yucatán) hardcoded en literal de dato"
+regex = '''"folio":\s*"(09|10|11|12)\d{4,5}"'''
+tags = ["pii", "mexico", "registral"]
+
+[[rules]]
+id = "data-as-code-pipeline"
+description = "Variable TIER1_DATOS o similar con lista de dicts (data hardcoded)"
+regex = '''(TIER1_DATOS|UNIVERSO_DATOS|CASOS_DATA|PROSPECTOS_DATA)\s*=\s*\['''
+tags = ["pii", "data-as-code"]
+
+[[rules]]
+id = "pii-titular-real"
+description = "Campo titular con valor MAYÚSCULAS largas (probable PII)"
+regex = '''"titular":\s*"[A-ZÁÉÍÓÚÑ]{2,}\s+[A-ZÁÉÍÓÚÑ]{2,}'''
+tags = ["pii", "data-as-code"]
+
+[[rules]]
+id = "pii-promovente-judicial"
+description = "Campo promovente_judicial con valor banco/persona"
+regex = '''"promovente_judicial":\s*"[A-ZÁÉÍÓÚÑ]'''
+tags = ["pii", "data-as-code", "judicial"]
+
+[[rules]]
+id = "sucesion-de-cujus"
+description = "A BIENES DE seguido de nombre (sucesión con difunto identificado)"
+regex = '''A BIENES DE [A-ZÁÉÍÓÚÑ]{3,}\s+[A-ZÁÉÍÓÚÑ]{3,}'''
+tags = ["pii", "mexico", "sucesion"]
+
+# ─── Allowlist: falsos positivos conocidos del ecosistema ──────────────────
+
+[allowlist]
+description = "Falsos positivos conocidos en el ecosistema Felipe"
+
+paths = [
+    '''tests/fixtures/secret_leak\.patch''',
+    '''tests/fixtures/.*_fixture\..*''',
+    '''tests/fixtures/parser_golden_master\.json''',
+    '''skills/.*/references/api-.*\.md''',
+    '''\.gitleaks\.toml''',
+    '''\.githooks/pre-commit''',
+]
+
+regexes = [
+    '''RECAPTCHA_SITE_KEY''',
+    '''ASANA_PROJECT_ID''',
+    '''ASANA_WORKSPACE_ID''',
+    # Asana usa números de 16 dígitos como project/workspace IDs (públicos en org)
+    '''1213856827715447''',  # Backlog Sereno+Felipe
+    # Nombres sintéticos comunes en fixtures de test
+    '''FULANO MENGANO''',
+    '''JUAN PEREZ \(''',
+    '''MARIA LOPEZ \(''',
+]
+
+stopwords = [
+    "REPLACE_ME",
+    "YOUR_KEY_HERE",
+    "placeholder",
+    "/absolute/path/to/",
+    "example.com",
+]

@@ -1,0 +1,27 @@
+name: gitleaks
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  schedule:
+    # Escaneo nocturno completo (full history) los lunes 04:00 UTC
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Gitleaks scan (PII jurídica MX + secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history para detectar leaks en commits viejos
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml

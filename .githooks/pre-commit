@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Pre-commit gate — wrapper Gitleaks
+# Doctrina: ap-082 + draft-ap-fragile-custom-security-control
+# Triangulado arquitecto-agencial + gpt-5.5 (2026-05-22).
+#
+# Reemplaza hook custom artesanal (bash 103 líneas con regex frágiles) por
+# Gitleaks: herramienta estándar mantenida por comunidad, reglas custom en
+# .gitleaks.toml versionado (PII jurídica mexicana + secrets default).
+
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "❌ gitleaks no instalado. brew install gitleaks"
+    exit 1
+fi
+
+gitleaks protect --staged --redact --config .gitleaks.toml
